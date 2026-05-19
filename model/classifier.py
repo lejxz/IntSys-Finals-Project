@@ -15,12 +15,29 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-# Small, explicit stop-word set to keep preprocessing understandable.
+
+# for fraud/injection detection.
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
     "to", "was", "were", "will", "with", "your", "you", "our", "this",
-    "please",
+}
+
+# Domain-specific keywords for fraud detection (phishing, urgency, deception)
+FRAUD_KEYWORDS = {
+    "verify", "confirm", "urgent", "immediate", "action", "required",
+    "click", "link", "update", "password", "account", "suspended",
+    "alert", "security", "unusual", "activity", "re-activate", "confirm identity",
+    "bank", "paypal", "amazon", "apple", "microsoft", "verify account",
+    "act now", "limited time", "expire", "claim", "reward", "congratulations",
+}
+
+# Domain-specific keywords for prompt injection detection
+INJECTION_KEYWORDS = {
+    "select", "insert", "delete", "drop", "exec", "execute", "script",
+    "eval", "import", "function", "lambda", "print", "return", "class",
+    "def", "query", "database", "table", "sql", "code", "system",
+    "command", "bash", "shell", "python", "java", "javascript",
 }
 
 # Paths
@@ -38,11 +55,22 @@ def preprocess_text(text: str) -> str:
     1) Lowercase text
     2) Tokenize using alphabetic word boundaries
     3) Remove English stop words
-    4) Re-join into a clean string for token counting
+    4) Add special tokens for detected fraud/injection keywords (so model learns their importance)
+    5) Re-join into a clean string for token counting
     """
     normalized = (text or "").lower()
     tokens = re.findall(r"[a-z]+", normalized)
     filtered_tokens = [token for token in tokens if token not in STOP_WORDS]
+    
+    # Add domain-specific keyword markers - so the model learns they're important, not post-processing
+    fraud_found = any(kw in normalized for kw in FRAUD_KEYWORDS)
+    injection_found = any(kw in normalized for kw in INJECTION_KEYWORDS)
+    
+    if fraud_found:
+        filtered_tokens.append("__fraud_keyword_detected__")
+    if injection_found:
+        filtered_tokens.append("__injection_keyword_detected__")
+    
     return " ".join(filtered_tokens)
 
 
@@ -109,14 +137,72 @@ def _get_model() -> Dict[str, object]:
     return _MODEL
 
 
-def predict_email(text: str) -> Dict[str, Any]:
-    """Classify an email by counting word matches in each class.
+def _calculate_heuristic_scores(text: str) -> Dict[str, float]:
+    """Calculate simple heuristic indicators for fraud and injection.
     
-    Simple approach:
-    1. Extract and preprocess words from the email
-    2. For each class, count how many of those words appeared in training
-    3. Return the class with the highest count
+    Returns:
+        Dictionary with fraud_boost and injection_boost scores (0.0 to 1.0)
     """
+    fraud_boost = 0.0
+    injection_boost = 0.0
+    
+    lower_text = text.lower()
+    
+    # 1. URL detection - phishing indicator
+    if re.search(r'http[s]?://|www\.', lower_text):
+        fraud_boost += 0.15
+    
+    # 2. Count fraud keywords in original text
+    fraud_keyword_count = sum(1 for keyword in FRAUD_KEYWORDS if keyword in lower_text)
+    if fraud_keyword_count > 0:
+        fraud_boost += min(0.25, fraud_keyword_count * 0.05)
+    
+    # 3. Excessive special characters - injection indicator
+    special_char_count = len(re.findall(r'[!@#$%^&*()=+\[\]{};:\'",.<>?/\\]', text))
+    if len(text) > 10:
+        special_char_ratio = special_char_count / len(text)
+        if special_char_ratio > 0.15:  # High density of special chars
+            injection_boost += min(0.20, special_char_ratio * 0.5)
+    
+    # 4. Code/SQL patterns - injection indicator
+    code_patterns = [
+        r'\bselect\b.*\bfrom\b',  # SQL SELECT
+        r'\bdrop\b.*\btable\b',   # SQL DROP
+        r'<script|javascript:|eval|exec',  # XSS/Code patterns
+    ]
+    for pattern in code_patterns:
+        if re.search(pattern, lower_text, re.IGNORECASE):
+            injection_boost += 0.20
+            break
+    
+    # 5. Count injection keywords
+    injection_keyword_count = sum(1 for keyword in INJECTION_KEYWORDS if keyword in lower_text)
+    if injection_keyword_count > 1:  # Multiple code-related words
+        injection_boost += min(0.25, injection_keyword_count * 0.08)
+    
+    # 6. Urgent/scarcity language - fraud indicator
+    urgent_patterns = ['urgent', 'immediate', 'expire', 'limited time', 'act now', 'click here']
+    urgent_count = sum(1 for phrase in urgent_patterns if phrase in lower_text)
+    if urgent_count > 0:
+        fraud_boost += min(0.15, urgent_count * 0.05)
+    
+    return {
+        "fraud_boost": min(fraud_boost, 1.0),
+        "injection_boost": min(injection_boost, 1.0)
+    }
+
+
+def predict_email(text: str) -> Dict[str, Any]:
+    """Classify an email using Naïve Bayes with integrated domain keywords.
+    
+    Approach:
+    1. Preprocess text (includes domain keywords as special tokens)
+    2. Model learns from training data which keywords indicate fraud/injection
+    3. Calculate log probabilities using learned patterns
+    4. Return normalized probabilities for each category
+    """
+    import math
+    
     model = _get_model()
     cleaned_text = preprocess_text(text)
     tokens = tokenize(cleaned_text)
@@ -125,33 +211,49 @@ def predict_email(text: str) -> Dict[str, Any]:
     word_counts = model["word_counts"]
     class_counts = model["class_counts"]
     
-    # For each class, count matching words
-    scores: Dict[str, int] = {}
+    # Calculate total unique words across all classes (vocabulary size)
+    vocab = set()
     for label in labels:
-        match_count = 0
+        vocab.update(word_counts.get(label, {}).keys())
+    vocab_size = len(vocab)
+    
+    # For each class, calculate log probability with Laplace smoothing
+    scores: Dict[str, float] = {}
+    for label in labels:
+        class_count = class_counts.get(label, 1)
+        label_word_counts = word_counts.get(label, {})
+        total_words = sum(label_word_counts.values()) or 1
+        
+        # Prior probability of the class
+        log_prob = math.log(class_count / (sum(class_counts.values()) or 1))
+        
+        # For each token, add log P(token | class) with Laplace smoothing
         for token in tokens:
-            # Count how many times this word appears in this class's training data
-            match_count += word_counts.get(label, {}).get(token, 0)
-        scores[label] = match_count
+            word_freq = label_word_counts.get(token, 0)
+            # Laplace smoothing: (count + 1) / (total_words + vocab_size)
+            prob = (word_freq + 1) / (total_words + vocab_size)
+            log_prob += math.log(prob)
+        
+        scores[label] = log_prob
     
-    # Predicted class is the one with highest word match count
+    # Predicted class is the one with highest score
     predicted_label = max(scores, key=scores.get)
-    predicted_score = scores[predicted_label]
     
-    # Calculate simple percentages for display
-    total_matches = sum(scores.values()) or 1
-    safe_score = scores.get("safe", 0) / total_matches
-    fraud_score = scores.get("fraud", 0) / total_matches
-    injection_score = scores.get("injection", 0) / total_matches
+    # Convert scores to normalized probabilities for display
+    # Shift scores to prevent numeric underflow, then exponentiate and normalize
+    max_score = max(scores.values())
+    exp_scores = {label: math.exp(scores[label] - max_score) for label in labels}
+    total_exp = sum(exp_scores.values())
+    normalized = {label: exp_scores[label] / total_exp for label in labels}
     
     # Mark as malicious if fraud or injection is predicted
     is_malicious = predicted_label in {"fraud", "injection"}
     
     return {
-        "is_fraud": round(fraud_score, 4),
-        "is_injection": round(injection_score, 4),
-        "is_safe": round(safe_score, 4),
+        "is_fraud": round(normalized.get("fraud", 0), 4),
+        "is_injection": round(normalized.get("injection", 0), 4),
+        "is_safe": round(normalized.get("safe", 0), 4),
         "predicted_label": predicted_label,
         "status": "MALICIOUS" if is_malicious else "SAFE",
-        "match_count": predicted_score,
+        "match_count": round(scores[predicted_label], 2),
     }
