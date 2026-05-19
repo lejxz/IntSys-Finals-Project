@@ -100,7 +100,6 @@ def _build_model(rows: List[Tuple[str, str]]) -> Dict[str, object]:
         "class_counts": dict(class_counts),  # {label: example_count}
     }
 
-
 def _get_model() -> Dict[str, object]:
     """Load and cache the model, training it on first use."""
     global _MODEL
