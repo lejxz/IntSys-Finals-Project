@@ -1,6 +1,5 @@
 """Simple Naive Bayes classifier for email security analysis.
 
-A beginner-friendly implementation that:
 1. Loads training data from CSV
 2. Learns word frequencies for each email class (safe/fraud/injection)
 3. Classifies new emails by counting matching words
@@ -108,7 +107,6 @@ def _build_model(rows: List[Tuple[str, str]]) -> Dict[str, object]:
     """Build a simple word frequency model for each class.
     
     For each class (safe/fraud/injection), count how many times each word appears.
-    That's it - no smoothing, no complex math.
     """
     # word_counts[label] = Counter of word frequencies for that label
     word_counts: Dict[str, Counter] = defaultdict(Counter)

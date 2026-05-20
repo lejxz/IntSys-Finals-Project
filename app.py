@@ -1,36 +1,40 @@
-"""Flask web server for email fraud and prompt injection detection."""
-
 from __future__ import annotations
 
-from flask import Flask, jsonify, render_template, request
+import streamlit as st
 
 from model.classifier import predict_email
 
-app = Flask(__name__)
 
+st.set_page_config(page_title="Email Security Scanner", layout="centered")
 
-@app.route("/", methods=["GET"])
-def index():
-    """Serve the single-page UI."""
-    return render_template("index.html")
+st.title("Email Security Scanner")
+st.write("Detect fraud/phishing and prompt-injection risks using a Naive Bayes classifier.")
 
+text = st.text_area("Email content", height=320, placeholder="Paste the email body here...")
 
-@app.route("/scan", methods=["POST"])
-def scan_email():
-    """Analyze submitted email content and return prediction scores."""
-    payload = request.get_json(silent=True) or {}
-    text = (payload.get("text") or "").strip()
+if st.button("Scan"):
+    if not text or not text.strip():
+        st.error("Please enter email content before scanning.")
+    else:
+        try:
+            result = predict_email(text)
+        except FileNotFoundError as exc:
+            st.error(f"Dataset error: {exc}")
+        except Exception as exc:  # pragma: no cover - surface unexpected errors to user
+            st.error(f"Unexpected error: {exc}")
+        else:
+            # Show key metrics
+            safe_pct = int((result.get("is_safe", 0) or 0) * 100)
+            fraud_pct = int((result.get("is_fraud", 0) or 0) * 100)
+            injection_pct = int((result.get("is_injection", 0) or 0) * 100)
 
-    if not text:
-        return jsonify({"error": "Please provide email text to scan."}), 400
+            col1, col2, col3 = st.columns(3)
+            col1.metric("Safe", f"{safe_pct}%")
+            col2.metric("Fraud", f"{fraud_pct}%")
+            col3.metric("Injection", f"{injection_pct}%")
 
-    try:
-        result = predict_email(text)
-    except FileNotFoundError as exc:
-        return jsonify({"error": str(exc)}), 500
+            st.write("**Predicted label:**", result.get("predicted_label"))
+            st.write("**Status:**", result.get("status"))
 
-    return jsonify(result)
-
-
-if __name__ == "__main__":
-    app.run(debug=True)
+            with st.expander("Raw result"):
+                st.json(result)
