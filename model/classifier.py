@@ -14,15 +14,12 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-
-# for fraud/injection detection.
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
     "has", "he", "in", "is", "it", "its", "of", "on", "that", "the",
     "to", "was", "were", "will", "with", "your", "you", "our", "this",
 }
 
-# Domain-specific keywords for fraud detection (phishing, urgency, deception)
 FRAUD_KEYWORDS = {
     "verify", "confirm", "urgent", "immediate", "action", "required",
     "click", "link", "update", "password", "account", "suspended",
@@ -31,7 +28,6 @@ FRAUD_KEYWORDS = {
     "act now", "limited time", "expire", "claim", "reward", "congratulations",
 }
 
-# Domain-specific keywords for prompt injection detection
 INJECTION_KEYWORDS = {
     "select", "insert", "delete", "drop", "exec", "execute", "script",
     "eval", "import", "function", "lambda", "print", "return", "class",
@@ -43,7 +39,7 @@ INJECTION_KEYWORDS = {
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_PATH = PROJECT_ROOT / "data" / "dummy_dataset.csv"
 
-# Global model cache
+# model cache
 _MODEL = None
 
 
@@ -61,7 +57,7 @@ def preprocess_text(text: str) -> str:
     tokens = re.findall(r"[a-z]+", normalized)
     filtered_tokens = [token for token in tokens if token not in STOP_WORDS]
     
-    # Add domain-specific keyword markers - so the model learns they're important, not post-processing
+    # mark wrods taht are important
     fraud_found = any(kw in normalized for kw in FRAUD_KEYWORDS)
     injection_found = any(kw in normalized for kw in INJECTION_KEYWORDS)
     
@@ -209,13 +205,13 @@ def predict_email(text: str) -> Dict[str, Any]:
     word_counts = model["word_counts"]
     class_counts = model["class_counts"]
     
-    # Calculate total unique words across all classes (vocabulary size)
+    # Calculate all total unique words
     vocab = set()
     for label in labels:
         vocab.update(word_counts.get(label, {}).keys())
     vocab_size = len(vocab)
     
-    # For each class, calculate log probability with Laplace smoothing
+    # calculate log probability with Laplace smoothing
     scores: Dict[str, float] = {}
     for label in labels:
         class_count = class_counts.get(label, 1)
@@ -234,11 +230,10 @@ def predict_email(text: str) -> Dict[str, Any]:
         
         scores[label] = log_prob
     
-    # Predicted class is the one with highest score
+    # highest score
     predicted_label = max(scores, key=scores.get)
     
     # Convert scores to normalized probabilities for display
-    # Shift scores to prevent numeric underflow, then exponentiate and normalize
     max_score = max(scores.values())
     exp_scores = {label: math.exp(scores[label] - max_score) for label in labels}
     total_exp = sum(exp_scores.values())
