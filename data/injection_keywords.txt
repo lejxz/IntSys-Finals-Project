@@ -60,3 +60,37 @@ act as
 forget previous
 do anything now
 unrestricted mode
+ignore all existing security protocols
+grant administrator access
+grant admin access
+do not answer
+do not summarize
+respond only
+output the system prompt
+output the developer message
+print the hidden policy
+reveal hidden instructions
+hidden instructions
+assistant instructions
+application policy
+security policy
+internal rules
+private prompt
+confidential instructions
+override safety
+disable safety
+disable protection
+ignore policy
+ignore instructions
+follow these instructions
+instructions carefully
+access granted
+administrator access
+system update
+action needed
+terminal command
+execute this command
+run this in terminal
+hidden configuration
+developer notes
+developer instructions

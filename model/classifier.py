@@ -23,6 +23,10 @@ STOP_WORDS = {
 TITLE_WEIGHT = 2
 LAPLACE_SMOOTHING = 1.0
 POSTERIOR_TEMPERATURE = 0.5
+FRAUD_KEYWORD_WEIGHT = 2
+INJECTION_KEYWORD_WEIGHT = 2
+FRAUD_SENTENCE_WEIGHT = 3
+INJECTION_SENTENCE_WEIGHT = 3
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -109,6 +113,25 @@ def _matched_sentences(text: str, matches: Sequence[str]) -> List[str]:
     return flagged
 
 
+def _sentence_features(text: str, fraud_matches: Sequence[str], injection_matches: Sequence[str]) -> List[str]:
+    """Create sentence-level features so malicious clauses inside safe messages stay visible."""
+    features: List[str] = []
+    fraud_patterns = [_keyword_pattern(term) for term in fraud_matches]
+    injection_patterns = [_keyword_pattern(term) for term in injection_matches]
+
+    for sentence in _split_sentences(text):
+        lowered = sentence.lower()
+        fraud_hits = sum(1 for pattern in fraud_patterns if pattern.search(lowered))
+        injection_hits = sum(1 for pattern in injection_patterns if pattern.search(lowered))
+
+        if fraud_hits:
+            features.extend(["__fraud_sentence__"] * (FRAUD_SENTENCE_WEIGHT * fraud_hits))
+        if injection_hits:
+            features.extend(["__injection_sentence__"] * (INJECTION_SENTENCE_WEIGHT * injection_hits))
+
+    return features
+
+
 def _extract_features(text: str, fraud_matches: Sequence[str], injection_matches: Sequence[str]) -> List[str]:
     """Build features for Naive Bayes scoring."""
     words = _tokenize_words(text)
@@ -119,9 +142,13 @@ def _extract_features(text: str, fraud_matches: Sequence[str], injection_matches
     features.extend(f"{words[index]}_{words[index + 1]}" for index in range(len(words) - 1))
 
     for _ in fraud_matches:
-        features.extend(["__fraud_kw__", "__malicious_signal__"])
+        features.extend(["__fraud_kw__"] * FRAUD_KEYWORD_WEIGHT)
+        features.extend(["__malicious_signal__"] * FRAUD_KEYWORD_WEIGHT)
     for _ in injection_matches:
-        features.extend(["__injection_kw__", "__malicious_signal__"])
+        features.extend(["__injection_kw__"] * INJECTION_KEYWORD_WEIGHT)
+        features.extend(["__malicious_signal__"] * INJECTION_KEYWORD_WEIGHT)
+
+    features.extend(_sentence_features(text, fraud_matches, injection_matches))
 
     return features
 
