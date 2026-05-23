@@ -13,7 +13,6 @@ st.set_page_config(page_title="Email Threat Intelligence Scanner", layout="wide"
 
 
 def _render_styles() -> None:
-    # Keep CSS minimal and theme-friendly; Streamlit handles most light/dark differences.
     st.markdown(
         """
         <style>
