@@ -1,0 +1,65 @@
+# Fraud and phishing indicator keywords/phrases
+verify
+confirm
+urgent
+immediate
+action
+required
+click
+link
+update
+password
+account
+suspended
+alert
+security
+unusual
+activity
+re-activate
+confirm identity
+bank
+paypal
+amazon
+apple
+microsoft
+verify account
+act now
+limited time
+expire
+claim
+reward
+congratulations
+invoice
+payment
+overdue
+wire
+transfer
+billing
+token
+credential
+login
+reauthenticate
+reset
+locked
+deactivation
+confirm account
+identity
+verify now
+click here
+login now
+immediately
+failure to comply
+last warning
+suspension
+terminated
+official notice
+refund
+prize
+customs fee
+processing fee
+gift card
+crypto
+wallet
+settlement
+legal action
+final notice

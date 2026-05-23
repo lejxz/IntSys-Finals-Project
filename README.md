@@ -6,15 +6,16 @@ This project detects fraud/phishing and prompt injection in email content using 
 
 ```text
 .
-├── streamlit_app.py
+├── app.py
 ├── requirements.txt
 ├── model/
 │   └── classifier.py
 └── data/
-    └── dummy_dataset.csv
+    ├── final_dataset.csv
+    ├── fraud_keywords.txt
+    └── injection_keywords.txt
 ```
 
-Expected outcome: a single dataset and two Python files (`streamlit_app.py` and `model/classifier.py`).
 
 ## Quick Start
 

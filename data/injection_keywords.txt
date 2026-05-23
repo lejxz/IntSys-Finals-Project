@@ -1,0 +1,62 @@
+# Prompt-injection and code-injection indicator keywords/phrases
+select
+insert
+delete
+drop
+exec
+execute
+script
+eval
+import
+function
+lambda
+print
+return
+class
+def
+query
+database
+table
+sql
+code
+system
+command
+bash
+shell
+python
+java
+javascript
+ignore previous instructions
+reveal system prompt
+developer message
+bypass
+override
+ignore safeguards
+chain of thought
+hidden policy
+confidential prompt
+leak
+exfiltrate
+disable filters
+admin access
+escalate privileges
+run command
+powershell
+cmd
+terminal
+curl
+wget
+subprocess
+os system
+runtime
+deserialize
+union select
+or 1=1
+drop table
+xp_cmdshell
+prompt injection
+jailbreak
+act as
+forget previous
+do anything now
+unrestricted mode

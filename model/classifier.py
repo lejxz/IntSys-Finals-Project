@@ -1,18 +1,16 @@
-"""Simple Naive Bayes classifier for email security analysis.
-
-1. Loads training data from CSV
-2. Learns word frequencies for each email class (safe/fraud/injection)
-3. Classifies new emails by counting matching words
-
+"""Naive Bayes classifier for email security analysis.
+This module implements a simple Naive Bayes classifier.
+Using token frequencies and keyword matches.
 """
 
 from __future__ import annotations
 
 import csv
+import math
 import re
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Sequence, Tuple
 
 STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from",
@@ -20,60 +18,112 @@ STOP_WORDS = {
     "to", "was", "were", "will", "with", "your", "you", "our", "this",
 }
 
-FRAUD_KEYWORDS = {
-    "verify", "confirm", "urgent", "immediate", "action", "required",
-    "click", "link", "update", "password", "account", "suspended",
-    "alert", "security", "unusual", "activity", "re-activate", "confirm identity",
-    "bank", "paypal", "amazon", "apple", "microsoft", "verify account",
-    "act now", "limited time", "expire", "claim", "reward", "congratulations",
-}
-
-INJECTION_KEYWORDS = {
-    "select", "insert", "delete", "drop", "exec", "execute", "script",
-    "eval", "import", "function", "lambda", "print", "return", "class",
-    "def", "query", "database", "table", "sql", "code", "system",
-    "command", "bash", "shell", "python", "java", "javascript",
-}
+# Tunable scoring.
+# Adjust confidence behavior.
+TITLE_WEIGHT = 2
+LAPLACE_SMOOTHING = 1.0
+POSTERIOR_TEMPERATURE = 0.5
 
 # Paths
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_PATH = PROJECT_ROOT / "data" / "dummy_dataset.csv"
+DATA_DIR = PROJECT_ROOT / "data"
+DATA_PATH = DATA_DIR / "final_dataset.csv"
+FRAUD_KEYWORDS_PATH = DATA_DIR / "fraud_keywords.txt"
+INJECTION_KEYWORDS_PATH = DATA_DIR / "injection_keywords.txt"
+
+
+def _load_keyword_file(path: Path) -> set[str]:
+    """Load newline-delimited keywords from a file in data/. """
+    if not path.exists():
+        raise FileNotFoundError(f"Keyword file not found: {path}")
+
+    loaded: set[str] = set()
+    with path.open("r", encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip().lower()
+            if not line or line.startswith("#"):
+                continue
+            loaded.add(line)
+
+    if not loaded:
+        raise ValueError(f"Keyword file is empty: {path}")
+
+    return loaded
+
+
+FRAUD_KEYWORDS = _load_keyword_file(FRAUD_KEYWORDS_PATH)
+INJECTION_KEYWORDS = _load_keyword_file(INJECTION_KEYWORDS_PATH)
 
 # model cache
 _MODEL = None
 
 
-def preprocess_text(text: str) -> str:
-    """Normalize input text before Naive Bayes scoring.
-    
-    Steps:
-    1) Lowercase text
-    2) Tokenize using alphabetic word boundaries
-    3) Remove English stop words
-    4) Add special tokens for detected fraud/injection keywords (so model learns their importance)
-    5) Re-join into a clean string for token counting
-    """
-    normalized = (text or "").lower()
-    tokens = re.findall(r"[a-z]+", normalized)
-    filtered_tokens = [token for token in tokens if token not in STOP_WORDS]
-    
-    # mark wrods taht are important
-    fraud_found = any(kw in normalized for kw in FRAUD_KEYWORDS)
-    injection_found = any(kw in normalized for kw in INJECTION_KEYWORDS)
-    
-    if fraud_found:
-        filtered_tokens.append("__fraud_keyword_detected__")
-    if injection_found:
-        filtered_tokens.append("__injection_keyword_detected__")
-    
-    return " ".join(filtered_tokens)
+def _normalize_text(text: str) -> str:
+    """Normalize input text for consistent feature extraction."""
+    return (text or "").lower().strip()
 
 
-def tokenize(text: str) -> List[str]:
-    """Tokenize normalized text into word tokens."""
-    if not text:
+def _tokenize_words(text: str) -> List[str]:
+    """Tokenize text into lowercase alphabetic words with stop-word filtering."""
+    tokens = re.findall(r"[a-z]+", _normalize_text(text))
+    return [token for token in tokens if token not in STOP_WORDS]
+
+
+def _keyword_pattern(keyword: str) -> re.Pattern[str]:
+    """Build a single or multi-word keywords."""
+    parts = [re.escape(part) for part in keyword.lower().split() if part]
+    if not parts:
+        return re.compile(r"$^")
+    joined = r"\s+".join(parts)
+    return re.compile(rf"\b{joined}\b", flags=re.IGNORECASE)
+
+
+def _find_matches(text: str, keywords: Sequence[str]) -> List[str]:
+    """Return unique keyword/phrase matches that appear in the text."""
+    normalized = _normalize_text(text)
+    matches: List[str] = []
+    for keyword in sorted(keywords):
+        pattern = _keyword_pattern(keyword)
+        if pattern.search(normalized):
+            matches.append(keyword)
+    return matches
+
+
+def _split_sentences(text: str) -> List[str]:
+    """Split text into sentence-like chunks for explainability"""
+    candidates = re.split(r"(?<=[.!?])\s+|\n+", text or "")
+    return [segment.strip() for segment in candidates if segment and segment.strip()]
+
+
+def _matched_sentences(text: str, matches: Sequence[str]) -> List[str]:
+    """Collect sentence fragments that contain any of the matched terms."""
+    if not matches:
         return []
-    return text.split()
+
+    patterns = [_keyword_pattern(term) for term in matches]
+    flagged: List[str] = []
+    for sentence in _split_sentences(text):
+        lowered = sentence.lower()
+        if any(pattern.search(lowered) for pattern in patterns):
+            flagged.append(sentence)
+    return flagged
+
+
+def _extract_features(text: str, fraud_matches: Sequence[str], injection_matches: Sequence[str]) -> List[str]:
+    """Build features for Naive Bayes scoring."""
+    words = _tokenize_words(text)
+    if not words:
+        return []
+
+    features: List[str] = list(words)
+    features.extend(f"{words[index]}_{words[index + 1]}" for index in range(len(words) - 1))
+
+    for _ in fraud_matches:
+        features.extend(["__fraud_kw__", "__malicious_signal__"])
+    for _ in injection_matches:
+        features.extend(["__injection_kw__", "__malicious_signal__"])
+
+    return features
 
 
 def _load_dataset() -> List[Tuple[str, str]]:
@@ -100,26 +150,32 @@ def _load_dataset() -> List[Tuple[str, str]]:
 
 
 def _build_model(rows: List[Tuple[str, str]]) -> Dict[str, object]:
-    """Build a simple word frequency model for each class.
-    
-    For each class (safe/fraud/injection), count how many times each word appears.
-    """
-    # word_counts[label] = Counter of word frequencies for that label
+    """Build a Naive Bayes token-frequency model for each class."""
     word_counts: Dict[str, Counter] = defaultdict(Counter)
-    class_counts = Counter()  # How many examples per class
-    
+    class_counts = Counter()
+
     for text, label in rows:
         class_counts[label] += 1
-        tokens = tokenize(preprocess_text(text))
+        fraud_matches = _find_matches(text, FRAUD_KEYWORDS)
+        injection_matches = _find_matches(text, INJECTION_KEYWORDS)
+        tokens = _extract_features(text, fraud_matches, injection_matches)
         for token in tokens:
             word_counts[label][token] += 1
-    
+
     labels = sorted(class_counts.keys())
-    
+
+    vocabulary = set()
+    token_totals: Dict[str, int] = {}
+    for label in labels:
+        vocabulary.update(word_counts[label].keys())
+        token_totals[label] = sum(word_counts[label].values())
+
     return {
         "labels": labels,
-        "word_counts": dict(word_counts),  # {label: {word: frequency}}
-        "class_counts": dict(class_counts),  # {label: example_count}
+        "word_counts": dict(word_counts),
+        "class_counts": dict(class_counts),
+        "vocabulary": vocabulary,
+        "token_totals": token_totals,
     }
 
 def _get_model() -> Dict[str, object]:
@@ -131,122 +187,86 @@ def _get_model() -> Dict[str, object]:
     return _MODEL
 
 
-def _calculate_heuristic_scores(text: str) -> Dict[str, float]:
-    """Calculate simple heuristic indicators for fraud and injection.
-    
-    Returns:
-        Dictionary with fraud_boost and injection_boost scores (0.0 to 1.0)
-    """
-    fraud_boost = 0.0
-    injection_boost = 0.0
-    
-    lower_text = text.lower()
-    
-    # 1. URL detection - phishing indicator
-    if re.search(r'http[s]?://|www\.', lower_text):
-        fraud_boost += 0.15
-    
-    # 2. Count fraud keywords in original text
-    fraud_keyword_count = sum(1 for keyword in FRAUD_KEYWORDS if keyword in lower_text)
-    if fraud_keyword_count > 0:
-        fraud_boost += min(0.25, fraud_keyword_count * 0.05)
-    
-    # 3. Excessive special characters - injection indicator
-    special_char_count = len(re.findall(r'[!@#$%^&*()=+\[\]{};:\'",.<>?/\\]', text))
-    if len(text) > 10:
-        special_char_ratio = special_char_count / len(text)
-        if special_char_ratio > 0.15:  # High density of special chars
-            injection_boost += min(0.20, special_char_ratio * 0.5)
-    
-    # 4. Code/SQL patterns - injection indicator
-    code_patterns = [
-        r'\bselect\b.*\bfrom\b',  # SQL SELECT
-        r'\bdrop\b.*\btable\b',   # SQL DROP
-        r'<script|javascript:|eval|exec',  # XSS/Code patterns
-    ]
-    for pattern in code_patterns:
-        if re.search(pattern, lower_text, re.IGNORECASE):
-            injection_boost += 0.20
-            break
-    
-    # 5. Count injection keywords
-    injection_keyword_count = sum(1 for keyword in INJECTION_KEYWORDS if keyword in lower_text)
-    if injection_keyword_count > 1:  # Multiple code-related words
-        injection_boost += min(0.25, injection_keyword_count * 0.08)
-    
-    # 6. Urgent/scarcity language - fraud indicator
-    urgent_patterns = ['urgent', 'immediate', 'expire', 'limited time', 'act now', 'click here']
-    urgent_count = sum(1 for phrase in urgent_patterns if phrase in lower_text)
-    if urgent_count > 0:
-        fraud_boost += min(0.15, urgent_count * 0.05)
-    
-    return {
-        "fraud_boost": min(fraud_boost, 1.0),
-        "injection_boost": min(injection_boost, 1.0)
-    }
+def predict_email(text: str = "", title: str = "", body: str = "") -> Dict[str, Any]:
+    """Classify an email using Naive Bayes with keyword-based features.
 
-
-def predict_email(text: str) -> Dict[str, Any]:
-    """Classify an email using Naïve Bayes with integrated domain keywords.
-    
-    Approach:
-    1. Preprocess text (includes domain keywords as special tokens)
-    2. Model learns from training data which keywords indicate fraud/injection
-    3. Calculate log probabilities using learned patterns
-    4. Return normalized probabilities for each category
+    Args:
+        text: Backward-compatible input for single-body callers.
+        title: Email subject/title.
+        body: Email body.
     """
-    import math
-    
     model = _get_model()
-    cleaned_text = preprocess_text(text)
-    tokens = tokenize(cleaned_text)
-    
+
+    raw_title = (title or "").strip()
+    raw_body = (body or text or "").strip()
+    combined_text = "\n".join(part for part in [raw_title, raw_body] if part)
+
+    # Weight title signals more strongly by repeating it.
+    weighted_title = " ".join([raw_title] * TITLE_WEIGHT).strip()
+    weighted_text = f"{weighted_title} {raw_body}".strip()
+
+    fraud_matches = _find_matches(combined_text, FRAUD_KEYWORDS)
+    injection_matches = _find_matches(combined_text, INJECTION_KEYWORDS)
+    tokens = _extract_features(weighted_text, fraud_matches, injection_matches)
+
     labels = model["labels"]
     word_counts = model["word_counts"]
     class_counts = model["class_counts"]
-    
-    # Calculate all total unique words
-    vocab = set()
-    for label in labels:
-        vocab.update(word_counts.get(label, {}).keys())
-    vocab_size = len(vocab)
-    
-    # calculate log probability with Laplace smoothing
+    token_totals = model["token_totals"]
+    vocabulary = model["vocabulary"]
+    vocab_size = max(1, len(vocabulary))
+    total_docs = sum(class_counts.values()) or 1
+
     scores: Dict[str, float] = {}
+
     for label in labels:
         class_count = class_counts.get(label, 1)
         label_word_counts = word_counts.get(label, {})
-        total_words = sum(label_word_counts.values()) or 1
-        
-        # Prior probability of the class
-        log_prob = math.log(class_count / (sum(class_counts.values()) or 1))
-        
-        # For each token, add log P(token | class) with Laplace smoothing
+        total_words = token_totals.get(label, 0)
+
+        # Empirical class prior for Naive Bayes behavior.
+        log_prob = math.log(class_count / total_docs)
+
         for token in tokens:
             word_freq = label_word_counts.get(token, 0)
-            # Laplace smoothing: (count + 1) / (total_words + vocab_size)
-            prob = (word_freq + 1) / (total_words + vocab_size)
+            prob = (word_freq + LAPLACE_SMOOTHING) / (total_words + LAPLACE_SMOOTHING * vocab_size)
             log_prob += math.log(prob)
-        
+
         scores[label] = log_prob
-    
-    # highest score
+
+    if not scores:
+        raise ValueError("No labels available in model. Check the dataset.")
+
     predicted_label = max(scores, key=scores.get)
-    
-    # Convert scores to normalized probabilities for display
-    max_score = max(scores.values())
-    exp_scores = {label: math.exp(scores[label] - max_score) for label in labels}
-    total_exp = sum(exp_scores.values())
+
+    token_count = max(1, len(tokens))
+    calibrated_logits = {label: (scores[label] / token_count) for label in labels}
+
+    max_score = max(calibrated_logits.values())
+    exp_scores = {
+        label: math.exp((calibrated_logits[label] - max_score) / POSTERIOR_TEMPERATURE)
+        for label in labels
+    }
+    total_exp = sum(exp_scores.values()) or 1.0
     normalized = {label: exp_scores[label] / total_exp for label in labels}
-    
-    # Mark as malicious if fraud or injection is predicted
+
     is_malicious = predicted_label in {"fraud", "injection"}
-    
+
+    flagged_sentences = _matched_sentences(combined_text, [*fraud_matches, *injection_matches])
+
     return {
-        "is_fraud": round(normalized.get("fraud", 0), 4),
-        "is_injection": round(normalized.get("injection", 0), 4),
-        "is_safe": round(normalized.get("safe", 0), 4),
+        "is_fraud": normalized.get("fraud", 0.0),
+        "is_injection": normalized.get("injection", 0.0),
+        "is_safe": normalized.get("safe", 0.0),
         "predicted_label": predicted_label,
         "status": "MALICIOUS" if is_malicious else "SAFE",
-        "match_count": round(scores[predicted_label], 2),
+        "score": round(scores.get(predicted_label, 0.0), 3),
+        "raw_scores": {label: round(score, 6) for label, score in scores.items()},
+        "fraud_matches": fraud_matches,
+        "injection_matches": injection_matches,
+        "flagged_sentences": flagged_sentences,
+        "signal_counts": {
+            "fraud": len(fraud_matches),
+            "injection": len(injection_matches),
+        },
     }
