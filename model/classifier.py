@@ -22,7 +22,7 @@ STOP_WORDS = {
 # Adjust confidence behavior.
 TITLE_WEIGHT = 2
 LAPLACE_SMOOTHING = 1.0
-POSTERIOR_TEMPERATURE = 0.5
+POSTERIOR_TEMPERATURE = 0.5 # Lower values make the model more confident in its predictions.
 FRAUD_KEYWORD_WEIGHT = 2
 INJECTION_KEYWORD_WEIGHT = 2
 FRAUD_SENTENCE_WEIGHT = 3
