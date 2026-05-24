@@ -89,17 +89,18 @@ def _get_model() -> Dict[str, object]:
 
 
 def predict_email(text: str = "", title: str = "", body: str = "") -> Dict[str, Any]:
-    """Classify an email using Naive Bayes with keyword-based features."""
     model = _get_model()
 
+    # Keep title and body separate first so keyword matching can inspect the full message.
     raw_title = (title or "").strip()
     raw_body = (body or text or "").strip()
     combined_text = "\n".join(part for part in [raw_title, raw_body] if part)
 
-    # Weight title signals more strongly by repeating it.
+    # Give the title extra influence because subject lines often carry stronger intent.
     weighted_title = " ".join([raw_title] * TITLE_WEIGHT).strip()
     weighted_text = f"{weighted_title} {raw_body}".strip()
 
+    # Extract keyword hits from the original text, then build the final feature list for scoring.
     fraud_matches = find_matches(combined_text, FRAUD_KEYWORDS)
     injection_matches = find_matches(combined_text, INJECTION_KEYWORDS)
     tokens = extract_features(weighted_text, fraud_matches, injection_matches)
@@ -114,12 +115,13 @@ def predict_email(text: str = "", title: str = "", body: str = "") -> Dict[str, 
 
     scores: Dict[str, float] = {}
 
+    # Score each class by summing log probabilities for the observed features.
     for label in labels:
         class_count = class_counts.get(label, 1)
         label_word_counts = word_counts.get(label, {})
         total_words = token_totals.get(label, 0)
 
-        # Empirical class prior for Naive Bayes behavior.
+        # Start with the class prior so common classes still have a baseline probability.
         log_prob = math.log(class_count / total_docs)
 
         for token in tokens:
@@ -134,6 +136,7 @@ def predict_email(text: str = "", title: str = "", body: str = "") -> Dict[str, 
 
     predicted_label = max(scores, key=scores.get)
 
+    # Convert raw scores into comparable normalized values for the UI.
     token_count = max(1, len(tokens))
     calibrated_logits = {label: (scores[label] / token_count) for label in labels}
 
@@ -145,6 +148,7 @@ def predict_email(text: str = "", title: str = "", body: str = "") -> Dict[str, 
     total_exp = sum(exp_scores.values()) or 1.0
     normalized = {label: exp_scores[label] / total_exp for label in labels}
 
+    # Mark the message as malicious if either malicious class wins.
     is_malicious = predicted_label in {"fraud", "injection"}
 
     return {
