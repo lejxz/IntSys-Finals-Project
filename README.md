@@ -31,6 +31,10 @@ python -m venv .venv
 ```powershell
 pip install -r requirements.txt
 ```
+or
+```powershell
+pip install streamlit
+```
 
 3. Run the Streamlit app:
 
