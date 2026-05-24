@@ -241,7 +241,6 @@ def _render_results(title: str, body: str) -> None:
 
     fraud_matches = result.get("fraud_matches") or []
     injection_matches = result.get("injection_matches") or []
-    flagged_sentences = result.get("flagged_sentences") or []
 
     st.write("Highlighted evidence")
     if title.strip():
@@ -257,17 +256,6 @@ def _render_results(title: str, body: str) -> None:
             unsafe_allow_html=True,
         )
 
-    c1, c2 = st.columns(2)
-    with c1:
-        st.write("Matched fraud terms")
-        st.write("\n".join(f"- {term}" for term in fraud_matches) if fraud_matches else "- none")
-    with c2:
-        st.write("Matched injection terms")
-        st.write("\n".join(f"- {term}" for term in injection_matches) if injection_matches else "- none")
-
-    st.write("Flagged sentences")
-    st.write("\n".join(f"- {sentence}" for sentence in flagged_sentences) if flagged_sentences else "- none")
-
     with st.expander("Raw result / outcome"):
         st.json(result)
 
@@ -277,7 +265,7 @@ def main() -> None:
     _init_state()
 
     st.title("Email Threat Intelligence Scanner")
-    st.caption("Hybrid Naive Bayes scoring with explicit fraud and injection signal tracing.")
+    st.caption("Hybrid Naive Bayes scoring with highlighted evidence.")
 
     left, right = st.columns([1.1, 1])
 

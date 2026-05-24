@@ -1,6 +1,6 @@
 # Email Security Project (Naive Bayes)
 
-This project detects fraud/phishing and prompt injection in email content using a Naive Bayes classifier implemented in pure Python.
+This project detects fraud/phishing and prompt injection in email content using a Naive Bayes classifier implemented in Python.
 
 ## Project Structure
 
@@ -9,11 +9,11 @@ This project detects fraud/phishing and prompt injection in email content using 
 ├── app.py
 ├── requirements.txt
 ├── model/
-│   └── classifier.py
+│   ├── classifier.py
+│   └── text_features.py
 └── data/
     ├── final_dataset.csv
-    ├── fraud_keywords.txt
-    └── injection_keywords.txt
+    └── keywords.json
 ```
 
 
